@@ -4,6 +4,8 @@ async function login(page: Page, userId: string): Promise<void> {
   await page.goto('/login');
   await page.getByTestId('user-select').selectOption(userId);
   await page.getByTestId('login').click();
+  await expect(page.getByTestId('home-tools')).toBeVisible();
+  await page.getByTestId('nav-refunds').click();
   await expect(page.getByTestId('queue')).toBeVisible();
 }
 
@@ -64,6 +66,33 @@ test('viewer cannot mutate: no decision form and direct POST is 403', async ({ p
   await page.reload();
   await expect(page.getByTestId('status')).toHaveText('PENDING');
   await expect(page.getByTestId('audit-empty')).toBeVisible();
+});
+
+test('queue search and status filter narrow the rows while counts stay full-list', async ({
+  page,
+}) => {
+  await login(page, 'user-viewer');
+
+  const counts = (text: string | null): string => String(text).split(' · showing ')[0];
+  const countsBefore = counts(await page.getByTestId('status-counts').textContent());
+
+  await page.getByTestId('refund-search').fill('CUST-0002');
+  await page.getByTestId('refund-filter-apply').click();
+  await expect(page.getByTestId('row-rr-1002')).toBeVisible();
+  await expect(page.getByTestId('row-rr-1001')).toHaveCount(0);
+  await expect(page.getByTestId('status-counts')).toContainText('showing 1');
+  expect(counts(await page.getByTestId('status-counts').textContent())).toBe(countsBefore);
+
+  await page.getByTestId('refund-filter-clear').click();
+  await page.getByTestId('status-filter').selectOption('REJECTED');
+  await page.getByTestId('refund-filter-apply').click();
+  await expect(page.getByTestId('row-rr-1007')).toBeVisible();
+  await expect(page.getByTestId('row-rr-1001')).toHaveCount(0);
+
+  await page.getByTestId('refund-filter-clear').click();
+  await page.getByTestId('sort-amount').click();
+  await expect(page).toHaveURL(/sort=amount&dir=asc/);
+  await expect(page.getByTestId('queue').locator('tbody tr').first()).toContainText('rr-1004');
 });
 
 test('gateway failure leaves the request PENDING with no audit entry', async ({ page }) => {

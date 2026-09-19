@@ -137,3 +137,60 @@ describe('server-side flag authorization', () => {
     expect(res.headers.get('location')).toBe('/login');
   });
 });
+
+describe('flag list filtering', () => {
+  const rowIds = (html: string): string[] =>
+    [...html.matchAll(/data-testid="row-(ff-[a-z0-9-]+)"/g)].map((m) => m[1]);
+
+  async function flagsList(cookie: string, query = ''): Promise<string> {
+    const res = await fetch(`${baseUrl}/flags${query}`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  it('renders the filter controls and every flag by default', async () => {
+    const cookie = await login('user-viewer');
+    const html = await flagsList(cookie);
+
+    expect(html).toContain('data-testid="flag-search"');
+    expect(html).toContain('data-testid="flag-env-filter"');
+    expect(html).toContain('data-testid="flag-state-filter"');
+    expect(rowIds(html)).toContain('ff-checkout-v2');
+    expect(rowIds(html)).toContain('ff-dark-mode');
+  });
+
+  it('searches key and description', async () => {
+    const cookie = await login('user-viewer');
+
+    expect(rowIds(await flagsList(cookie, '?q=checkout'))).toEqual(['ff-checkout-v2']);
+    expect(rowIds(await flagsList(cookie, '?q=Dark%20colour'))).toEqual(['ff-dark-mode']);
+    expect(rowIds(await flagsList(cookie, '?q=nope'))).toEqual([]);
+  });
+
+  it('filters by environment and state', async () => {
+    const cookie = await login('user-viewer');
+
+    const enabledInProduction = rowIds(
+      await flagsList(cookie, '?environment=production&state=enabled'),
+    );
+    for (const id of enabledInProduction) {
+      expect(getFlagState(db, id, 'production')!.enabled).toBe(true);
+    }
+    expect(enabledInProduction).toContain('ff-dark-mode');
+
+    const disabledInDevelopment = rowIds(
+      await flagsList(cookie, '?environment=development&state=disabled'),
+    );
+    for (const id of disabledInDevelopment) {
+      expect(getFlagState(db, id, 'development')!.enabled).toBe(false);
+    }
+    expect(disabledInDevelopment).not.toContain('ff-dark-mode');
+  });
+
+  it('ignores unknown filter values', async () => {
+    const cookie = await login('user-viewer');
+    const html = await flagsList(cookie, '?environment=staging&state=maybe');
+
+    expect(rowIds(html)).toHaveLength(4);
+  });
+});

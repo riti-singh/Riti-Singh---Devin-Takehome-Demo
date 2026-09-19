@@ -95,7 +95,7 @@ export function listFlagStates(db: Db, flagId: string): FeatureFlagState[] {
 
 export function listFlagAuditEvents(db: Db, flagId: string): FlagAuditEvent[] {
   const rows = db
-    .prepare('SELECT * FROM flag_audit_events WHERE flag_id = ? ORDER BY created_at, id')
+    .prepare('SELECT * FROM flag_audit_events WHERE flag_id = ? ORDER BY created_at, rowid')
     .all(flagId) as FlagAuditRow[];
   return rows.map(toFlagAudit);
 }

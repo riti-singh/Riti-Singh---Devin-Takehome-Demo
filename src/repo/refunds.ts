@@ -75,7 +75,7 @@ export function getRefundRequest(db: Db, id: string): RefundRequest | undefined 
 
 export function listAuditEvents(db: Db, refundRequestId: string): AuditEvent[] {
   const rows = db
-    .prepare('SELECT * FROM audit_events WHERE refund_request_id = ? ORDER BY created_at, id')
+    .prepare('SELECT * FROM audit_events WHERE refund_request_id = ? ORDER BY created_at, rowid')
     .all(refundRequestId) as AuditRow[];
   return rows.map(toAudit);
 }

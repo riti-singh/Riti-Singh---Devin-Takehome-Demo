@@ -4,10 +4,26 @@ async function login(page: Page, userId: string): Promise<void> {
   await page.goto('/login');
   await page.getByTestId('user-select').selectOption(userId);
   await page.getByTestId('login').click();
-  await expect(page.getByTestId('queue')).toBeVisible();
-  await page.goto('/flags');
+  await expect(page.getByTestId('home-tools')).toBeVisible();
+  await page.getByTestId('nav-flags').click();
   await expect(page.getByTestId('flags')).toBeVisible();
 }
+
+test('flag search narrows the list', async ({ page }) => {
+  await login(page, 'user-viewer');
+
+  await page.getByTestId('flag-search').fill('checkout');
+  await page.getByTestId('flag-filter-apply').click();
+  await expect(page.getByTestId('row-ff-checkout-v2')).toBeVisible();
+  await expect(page.getByTestId('row-ff-dark-mode')).toHaveCount(0);
+
+  await page.getByTestId('flag-filter-clear').click();
+  await page.getByTestId('flag-env-filter').selectOption('production');
+  await page.getByTestId('flag-state-filter').selectOption('enabled');
+  await page.getByTestId('flag-filter-apply').click();
+  await expect(page.getByTestId('row-ff-dark-mode')).toBeVisible();
+  await expect(page.getByTestId('row-ff-apply-fail')).toHaveCount(0);
+});
 
 test('admin enables a production flag: state ENABLED and audit entry visible', async ({ page }) => {
   await login(page, 'user-admin');
