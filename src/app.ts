@@ -9,6 +9,20 @@ import {
   requireReviewer,
 } from './auth.js';
 import type { Db } from './db/index.js';
+import {
+  filterFlags,
+  parseEnvironment,
+  parseFlagState,
+  type FlagQuery,
+} from './domain/flagQuery.js';
+import {
+  countRefundStatuses,
+  filterAndSortRefunds,
+  parseRefundSort,
+  parseRefundStatus,
+  parseSortDirection,
+  type RefundQuery,
+} from './domain/refundQuery.js';
 import { MockFeatureFlagSystem, type FeatureFlagSystem } from './gateway/featureFlagSystem.js';
 import { MockRefundGateway, type RefundGateway } from './gateway/refundGateway.js';
 import {
@@ -20,7 +34,7 @@ import {
 import { getRefundRequest, getUser, listAuditEvents, listRefundRequests, listUsers } from './repo/refunds.js';
 import { changeFlag } from './service/changeFlag.js';
 import { decideRefund } from './service/decide.js';
-import { detailPage, flagDetailPage, flagsListPage, loginPage, queuePage } from './views.js';
+import { detailPage, flagDetailPage, flagsListPage, homePage, loginPage, queuePage } from './views.js';
 
 const decisionSchema = z.object({
   action: z.enum(['APPROVE', 'REJECT']),
@@ -73,7 +87,9 @@ export function createApp({
   });
   app.use(loadCurrentUser);
 
-  app.get('/', (_req, res) => res.redirect('/refunds'));
+  app.get('/', requireLogin, (req, res) => {
+    res.send(homePage(req.currentUser!));
+  });
 
   app.get('/login', (req, res) => {
     res.send(loginPage(listUsers(req.db)));
@@ -87,7 +103,7 @@ export function createApp({
       return;
     }
     req.session.userId = user.id;
-    res.redirect('/refunds');
+    res.redirect('/');
   });
 
   app.get('/logout', (req, res) => {
@@ -95,7 +111,9 @@ export function createApp({
   });
 
   app.get('/refunds', requireLogin, (req, res) => {
-    res.send(queuePage(req.currentUser!, listRefundRequests(req.db)));
+    const all = listRefundRequests(req.db);
+    const query = readRefundQuery(req);
+    res.send(queuePage(req.currentUser!, filterAndSortRefunds(all, query), countRefundStatuses(all), query));
   });
 
   app.get('/refunds/:id', requireLogin, (req, res) => {
@@ -135,7 +153,8 @@ export function createApp({
   app.get('/flags', requireLogin, (req, res) => {
     const flags = listFeatureFlags(req.db);
     const states = flags.flatMap((flag) => listFlagStates(req.db, flag.id));
-    res.send(flagsListPage(req.currentUser!, flags, states));
+    const query = readFlagQuery(req);
+    res.send(flagsListPage(req.currentUser!, filterFlags(flags, states, query), states, query));
   });
 
   app.get('/flags/:id', requireLogin, (req, res) => {
@@ -176,6 +195,28 @@ export function createApp({
   });
 
   return app;
+}
+
+function firstQueryValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  return Array.isArray(value) && typeof value[0] === 'string' ? value[0] : undefined;
+}
+
+function readRefundQuery(req: Request): RefundQuery {
+  return {
+    q: firstQueryValue(req.query.q),
+    status: parseRefundStatus(firstQueryValue(req.query.status)),
+    sort: parseRefundSort(firstQueryValue(req.query.sort)),
+    dir: parseSortDirection(firstQueryValue(req.query.dir)),
+  };
+}
+
+function readFlagQuery(req: Request): FlagQuery {
+  return {
+    q: firstQueryValue(req.query.q),
+    environment: parseEnvironment(firstQueryValue(req.query.environment)),
+    state: parseFlagState(firstQueryValue(req.query.state)),
+  };
 }
 
 function renderDetail(req: Request, res: Response, status = 200, error?: string): void {

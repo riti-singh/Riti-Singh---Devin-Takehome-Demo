@@ -223,6 +223,65 @@ for this time-boxed prototype.
 * SQLite single-file storage, no migrations tooling, no pagination on the
   queue, no rate limiting.
 
+## Shared internal-tools shell
+
+The two tools now sit behind one entry point instead of being two unrelated
+URLs. This milestone is presentation and read-side only: no mutation,
+authorization, audit or concurrency behaviour changed.
+
+**Home page (`GET /`).** Requires login (anonymous requests still redirect to
+`/login`) and lists both tools with a one-line description each
+(`data-testid="home-tools"`). A successful `POST /login` now redirects to `/`
+rather than `/refunds`, so the home page is the actual entry point.
+
+**Shared navigation.** Every signed-in page renders the same nav strip
+(`data-testid="nav"`) linking Home, Refund Operations and Feature Flag
+Administration, with the current tool marked `aria-current="page"` from the
+per-tool `Tool` already passed to `layout()`.
+
+**Cross-tool "Your access" panel.** `describeAccess(role)`
+(`src/domain/access.ts`) summarises what the signed-in user can do in *both*
+tools — for example `reviewer` → "approve/reject refunds; read-only for
+flags", `admin` → "read-only for refunds; change flags in any environment",
+`viewer` → "read-only across both tools". It is derived only from the pure
+rules the middleware enforces: `canDecide(role)` for refunds and
+`canChangeFlag(role, env)` evaluated over `ENVIRONMENTS` for flags, so the copy
+cannot drift from what the server actually allows. The full panel
+(`data-testid="access-panel"`) is on the home page; a one-line version appears
+in every tool header.
+
+### Refund queue search, filtering and sorting
+
+`GET /refunds` reads `q`, `status`, `sort` and `dir` from the query string;
+unknown values are ignored rather than rejected. `filterAndSortRefunds`
+(`src/domain/refundQuery.ts`) is a pure helper that text-searches id, customer
+reference and reason, filters by `PENDING`/`APPROVED`/`REJECTED`/`all`, and
+sorts by created date, amount or status in either direction.
+
+**The default ordering is preserved.** `listRefundRequests` still orders
+PENDING first, then `created_at DESC`, and with no `sort` parameter the helper
+leaves that order untouched — user-selected sorting overrides it only when
+explicitly chosen via the sortable column headers.
+
+A sort selected without an explicit `dir` is applied descending, and the filter
+form carries that same effective direction (`effectiveSortDirection`), so
+applying a search or status filter on top of a sort never flips its direction.
+
+Status counts (`data-testid="status-counts"`) are derived from the **full,
+unfiltered** list, so they stay stable while filtering and act as a fixed
+reference point; the same bar also reports how many rows the current filter
+shows.
+
+### Feature flag search and filtering
+
+`GET /flags` reads `q`, `environment` and `state`. `filterFlags`
+(`src/domain/flagQuery.ts`) searches flag key and description and filters by
+enabled/disabled state; the environment selection narrows which environments
+the state filter looks at (on its own it changes nothing, since every flag has
+a state in both environments). State cells keep their existing test ids and the
+existing `stateLabel()` rendering, with the environment named in the column
+header and on each cell.
+
 ## Reuse between the two tools
 
 Extracted, because the second tool genuinely needed it:
@@ -234,7 +293,10 @@ Extracted, because the second tool genuinely needed it:
   rule in `src/domain/`.
 * `src/views.ts` — `escapeHtml` and `layout` are shared; the previously
   hardcoded `· Refund Operations` title and header are now a per-tool
-  parameter, so refund pages render byte-identically.
+  parameter. `layout` also renders the shared nav and the short access summary,
+  so both tools pick up the shell without per-page markup.
+* `src/domain/access.ts` — the cross-tool capability summary, composed from the
+  two existing pure rule modules rather than restating their logic.
 
 Deliberately **not** extracted:
 
@@ -265,6 +327,9 @@ src/
   db/seed.ts              synthetic users, refund requests, feature flags
   domain/rules.ts         pure decision rules (reason required, PENDING-only, role)
   domain/flagRules.ts     pure flag rules (role x environment, reason required)
+  domain/access.ts        pure cross-tool "Your access" summary (canDecide + canChangeFlag)
+  domain/refundQuery.ts   pure refund queue search/filter/sort + status counts
+  domain/flagQuery.ts     pure flag list search/environment/state filtering
   domain/types.ts
   gateway/refundGateway.ts RefundGateway interface + deterministic MockRefundGateway
   gateway/featureFlagSystem.ts FeatureFlagSystem interface + MockFeatureFlagSystem
