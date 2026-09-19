@@ -95,6 +95,21 @@ test('queue search and status filter narrow the rows while counts stay full-list
   await expect(page.getByTestId('queue').locator('tbody tr').first()).toContainText('rr-1004');
 });
 
+test('applying a filter on top of a sort keeps the sort direction', async ({ page }) => {
+  await login(page, 'user-viewer');
+
+  await page.getByTestId('sort-amount').click();
+  await page.getByTestId('sort-amount').click();
+  await expect(page).toHaveURL(/sort=amount&dir=desc/);
+  const sortedIds = await page.getByTestId('queue').locator('tbody tr').allTextContents();
+
+  await page.getByTestId('refund-search').fill('CUST');
+  await page.getByTestId('refund-filter-apply').click();
+  await expect(page).toHaveURL(/sort=amount&dir=desc/);
+  const filteredIds = await page.getByTestId('queue').locator('tbody tr').allTextContents();
+  expect(filteredIds).toEqual(sortedIds.filter((row) => filteredIds.includes(row)));
+});
+
 test('gateway failure leaves the request PENDING with no audit entry', async ({ page }) => {
   await login(page, 'user-reviewer');
   await page.goto('/refunds/rr-1005');

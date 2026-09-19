@@ -2,7 +2,7 @@ import { describeAccess } from './domain/access.js';
 import type { FlagQuery } from './domain/flagQuery.js';
 import { canChangeFlag, ENVIRONMENTS } from './domain/flagRules.js';
 import type { RefundQuery, StatusCounts } from './domain/refundQuery.js';
-import { REFUND_STATUSES } from './domain/refundQuery.js';
+import { effectiveSortDirection, REFUND_STATUSES } from './domain/refundQuery.js';
 import type {
   AuditEvent,
   Environment,
@@ -157,13 +157,13 @@ ${accessPanel(user)}`,
 
 function sortHeader(label: string, sort: string, query: RefundQuery): string {
   const active = query.sort === sort;
-  const dir = active && query.dir === 'asc' ? 'desc' : 'asc';
+  const current = effectiveSortDirection(query);
   const params = new URLSearchParams();
   if (query.q) params.set('q', query.q);
   if (query.status) params.set('status', query.status);
   params.set('sort', sort);
-  params.set('dir', dir);
-  const arrow = active ? (query.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  params.set('dir', active && current === 'asc' ? 'desc' : 'asc');
+  const arrow = active ? (current === 'asc' ? ' ▲' : ' ▼') : '';
   return `<th><a href="/refunds?${escapeHtml(params.toString())}" data-testid="sort-${escapeHtml(sort)}">${escapeHtml(label)}${arrow}</a></th>`;
 }
 
@@ -204,7 +204,7 @@ export function queuePage(
   <input type="text" id="q" name="q" value="${escapeHtml(query.q ?? '')}" placeholder="id, customer or reason" data-testid="refund-search" />
   <label for="status">Status</label>
   <select id="status" name="status" data-testid="status-filter">${statusOptions(selectedStatus)}</select>
-  ${query.sort ? `<input type="hidden" name="sort" value="${escapeHtml(query.sort)}" /><input type="hidden" name="dir" value="${escapeHtml(query.dir ?? 'asc')}" />` : ''}
+  ${query.sort ? `<input type="hidden" name="sort" value="${escapeHtml(query.sort)}" /><input type="hidden" name="dir" value="${escapeHtml(effectiveSortDirection(query))}" />` : ''}
   <button type="submit" data-testid="refund-filter-apply">Apply</button>
   <a href="/refunds" data-testid="refund-filter-clear">Clear</a>
 </form>

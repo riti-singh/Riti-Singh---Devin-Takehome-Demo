@@ -12,6 +12,14 @@ export interface RefundQuery {
   dir?: SortDirection;
 }
 
+/** Direction used when a sort is selected without an explicit direction. */
+export const DEFAULT_SORT_DIRECTION: SortDirection = 'desc';
+
+/** The direction `filterAndSortRefunds` will actually apply for a query. */
+export function effectiveSortDirection(query: RefundQuery): SortDirection {
+  return query.dir ?? DEFAULT_SORT_DIRECTION;
+}
+
 export interface StatusCounts {
   all: number;
   PENDING: number;
@@ -57,7 +65,7 @@ function matchesText(request: RefundRequest, needle: string): boolean {
  */
 export function filterAndSortRefunds(
   requests: RefundRequest[],
-  { q, status, sort, dir = 'desc' }: RefundQuery = {},
+  { q, status, sort, dir = DEFAULT_SORT_DIRECTION }: RefundQuery = {},
 ): RefundRequest[] {
   const needle = q?.trim().toLowerCase();
   let result = requests;

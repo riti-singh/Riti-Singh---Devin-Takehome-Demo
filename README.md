@@ -263,6 +263,10 @@ PENDING first, then `created_at DESC`, and with no `sort` parameter the helper
 leaves that order untouched — user-selected sorting overrides it only when
 explicitly chosen via the sortable column headers.
 
+A sort selected without an explicit `dir` is applied descending, and the filter
+form carries that same effective direction (`effectiveSortDirection`), so
+applying a search or status filter on top of a sort never flips its direction.
+
 Status counts (`data-testid="status-counts"`) are derived from the **full,
 unfiltered** list, so they stay stable while filtering and act as a fixed
 reference point; the same bar also reports how many rows the current filter

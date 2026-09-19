@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   countRefundStatuses,
+  effectiveSortDirection,
   filterAndSortRefunds,
   parseRefundSort,
   parseRefundStatus,
@@ -123,6 +124,38 @@ describe('countRefundStatuses', () => {
     const filtered = filterAndSortRefunds(requests, { status: 'PENDING' });
     expect(countRefundStatuses(requests).all).toBe(3);
     expect(filtered).toHaveLength(1);
+  });
+});
+
+describe('effectiveSortDirection', () => {
+  it('reports the direction filterAndSortRefunds actually applies', () => {
+    expect(effectiveSortDirection({ sort: 'amount' })).toBe('desc');
+    expect(effectiveSortDirection({ sort: 'amount', dir: 'asc' })).toBe('asc');
+
+    const implicit = filterAndSortRefunds(requests, { sort: 'amount' });
+    const explicit = filterAndSortRefunds(requests, {
+      sort: 'amount',
+      dir: effectiveSortDirection({ sort: 'amount' }),
+    });
+    expect(ids(implicit)).toEqual(ids(explicit));
+  });
+
+  it('keeps the order stable when a filter is applied to an implicitly sorted query', () => {
+    const sorted = filterAndSortRefunds(requests, { sort: 'amount' });
+    const dir = effectiveSortDirection({ sort: 'amount' });
+    const filtered = filterAndSortRefunds(requests, { sort: 'amount', dir, q: 'CUST' });
+    expect(ids(filtered)).toEqual(ids(sorted).filter((id) => ids(filtered).includes(id)));
+
+    const byStatus = filterAndSortRefunds(requests, { sort: 'status' });
+    const statusDir = effectiveSortDirection({ sort: 'status' });
+    const statusFiltered = filterAndSortRefunds(requests, {
+      sort: 'status',
+      dir: statusDir,
+      status: 'PENDING',
+    });
+    expect(ids(statusFiltered)).toEqual(
+      ids(byStatus).filter((id) => ids(statusFiltered).includes(id)),
+    );
   });
 });
 

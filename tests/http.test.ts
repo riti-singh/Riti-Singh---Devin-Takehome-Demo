@@ -189,6 +189,24 @@ describe('refund queue filtering and sorting', () => {
     expect(amounts).toEqual([...amounts].sort((a, b) => b - a));
   });
 
+  it('keeps the effective sort direction when a filter is applied on top of a sort', async () => {
+    const cookie = await login('user-viewer');
+    const sorted = await queue(cookie, '?sort=amount');
+    const descending = rowIds(sorted).map((id) => getRefundRequest(db, id)!.amountCents);
+    expect(descending).toEqual([...descending].sort((a, b) => b - a));
+
+    // The filter form carries the direction the handler actually used, so
+    // submitting it must not silently flip an implicit desc sort to asc.
+    const hidden = /name="dir" value="(asc|desc)"/.exec(sorted)?.[1];
+    expect(hidden).toBe('desc');
+
+    const filtered = await queue(cookie, `?q=CUST&sort=amount&dir=${hidden}`);
+    const amounts = rowIds(filtered).map((id) => getRefundRequest(db, id)!.amountCents);
+    expect(amounts).toEqual([...amounts].sort((a, b) => b - a));
+    expect(filtered).toContain('data-testid="sort-amount"');
+    expect(filtered).toContain('sort=amount&amp;dir=asc');
+  });
+
   it('ignores unknown query values instead of failing', async () => {
     const cookie = await login('user-viewer');
     const html = await queue(cookie, '?status=BOGUS&sort=bogus&dir=sideways');
