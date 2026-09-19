@@ -10,6 +10,20 @@ Two small internal tools sharing one Express app:
 
 Deliberately time-boxed prototypes, not a platform.
 
+## What this prototype tests
+
+Whether Devin can establish internal-tool conventions once and then extend the
+same codebase with less human architectural guidance the second time. Refund
+Operations was built first; Feature Flag Administration was added afterwards
+from a fresh Devin session working from the existing repository and DeepWiki,
+reusing the conventions already set rather than re-deciding them.
+
+What it exercises is the application layer: authorization, auditable
+mutations, external-system boundaries, concurrency, testing, and how much of
+the first tool the second one can reuse. It does not attempt to reproduce the
+managed platform around something like Power Apps — no hosting, connectors,
+tenant administration, governance or lifecycle tooling.
+
 ## Stack
 
 TypeScript + Node, Express with server-rendered HTML (no SPA build), SQLite via
@@ -41,6 +55,19 @@ this is a prototype using simple session-based login backed by seeded users.
 `SESSION_SECRET` is optional in development (a random per-process secret is
 generated) and **required** when `NODE_ENV=production` — startup fails without
 it rather than falling back to a shared default.
+
+## Quick demo
+
+After `npm run setup && npm start`, at http://localhost:3000:
+
+1. Log in as `Rhea Reviewer`, approve or reject a `PENDING` refund with a
+   reason, and check the audit trail on the request's detail page.
+2. Log in as `Ada Admin` and change a flag's `production` state at `/flags`.
+3. Log in as `Dev Developer` and change the same flag's `development` state —
+   `production` shows as read-only, with no change form.
+4. Try the seeded failure cases — refund `rr-1005` (`CUST-GATEWAY-FAIL`) and
+   the `ff-apply-fail` flag: both report an error and leave the state and the
+   audit trail unchanged.
 
 ## Domain
 
