@@ -1,7 +1,8 @@
 import type { NextFunction, Request, Response } from 'express';
 import type { Db } from './db/index.js';
+import { canChangeFlag } from './domain/flagRules.js';
 import { canDecide } from './domain/rules.js';
-import type { User } from './domain/types.js';
+import type { Environment, User } from './domain/types.js';
 import { getUser } from './repo/refunds.js';
 
 declare module 'express-session' {
@@ -43,6 +44,28 @@ export function requireReviewer(req: Request, res: Response, next: NextFunction)
   }
   if (!canDecide(user.role)) {
     res.status(403).send('Forbidden: your role is read-only.');
+    return;
+  }
+  next();
+}
+
+/**
+ * Server-side enforcement point for flag mutations, parameterized on the target
+ * environment taken from the request body; hiding the form is cosmetic only.
+ */
+export function requireFlagChangePermission(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  const user = req.currentUser;
+  if (!user) {
+    res.status(401).send('Not logged in');
+    return;
+  }
+  const environment = String((req.body as { environment?: unknown })?.environment ?? '');
+  if (!canChangeFlag(user.role, environment as Environment)) {
+    res.status(403).send('Forbidden: your role cannot change flags in this environment.');
     return;
   }
   next();

@@ -1,4 +1,6 @@
-export type Role = 'reviewer' | 'viewer';
+export type Role = 'reviewer' | 'viewer' | 'developer' | 'admin';
+
+export type Environment = 'development' | 'production';
 
 export type RefundStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
@@ -16,6 +18,32 @@ export interface RefundRequest {
   amountCents: number;
   reason: string;
   status: RefundStatus;
+  createdAt: string;
+}
+
+export interface FeatureFlag {
+  id: string;
+  key: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface FeatureFlagState {
+  flagId: string;
+  environment: Environment;
+  enabled: boolean;
+  updatedAt: string;
+}
+
+export interface FlagAuditEvent {
+  id: string;
+  flagId: string;
+  environment: Environment;
+  actorUserId: string;
+  fromEnabled: boolean;
+  toEnabled: boolean;
+  reasonNote: string;
+  externalRef: string | null;
   createdAt: string;
 }
 
