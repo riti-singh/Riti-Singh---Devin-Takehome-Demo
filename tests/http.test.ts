@@ -72,6 +72,20 @@ describe('server-side authorization', () => {
     expect(listAuditEvents(db, 'rr-1003')).toHaveLength(1);
   });
 
+  it('sets a hardened session cookie', async () => {
+    const res = await fetch(`${baseUrl}/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ userId: 'user-reviewer' }),
+      redirect: 'manual',
+    });
+    const cookie = res.headers.get('set-cookie')!;
+
+    expect(cookie).toMatch(/HttpOnly/i);
+    expect(cookie).toMatch(/SameSite=Strict/i);
+    expect(cookie).not.toMatch(/Secure/i);
+  });
+
   it('redirects anonymous users to login', async () => {
     const res = await fetch(`${baseUrl}/refunds`, { redirect: 'manual' });
     expect(res.status).toBe(302);

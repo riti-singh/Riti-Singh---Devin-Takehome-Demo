@@ -3,11 +3,13 @@ import { evaluateDecision } from '../domain/rules.js';
 import type { AuditEvent, DecisionAction, User } from '../domain/types.js';
 import { RefundGatewayError, type RefundGateway } from '../gateway/refundGateway.js';
 import {
+  claimPendingRefund,
   getRefundRequest,
   insertAuditEvent,
   listAuditEvents,
-  updateRefundStatus,
 } from '../repo/refunds.js';
+
+class StaleDecisionError extends Error {}
 
 export type DecisionFailure =
   | 'NOT_FOUND'
@@ -43,9 +45,12 @@ function fail(failure: DecisionFailure): DecisionOutcome {
 /**
  * Applies an approve/reject decision.
  *
- * The gateway call, the status change and the single audit insert all happen
- * inside one SQLite transaction: if the gateway throws, the transaction is
- * rolled back, the request stays PENDING and no audit event is written.
+ * The status change, the gateway call and the single audit insert all happen
+ * inside one immediate SQLite transaction: if the gateway throws, the
+ * transaction is rolled back, the request stays PENDING and no audit event is
+ * written. The status change is a guarded `UPDATE ... WHERE status = 'PENDING'`
+ * so a request decided concurrently loses the race instead of being decided
+ * twice.
  *
  * KNOWN LIMITATION: this rollback does not give real consistency between the
  * external gateway and our database. If the external side effect succeeds but
@@ -71,9 +76,9 @@ export function decideRefund(
   if (!rules.ok) return fail(rules.failure);
 
   const apply = db.transaction((): AuditEvent => {
+    if (!claimPendingRefund(db, request.id, rules.toStatus)) throw new StaleDecisionError();
     const gatewayRef =
       input.action === 'APPROVE' ? gateway.issueRefund(request).gatewayRef : null;
-    updateRefundStatus(db, request.id, rules.toStatus);
     return insertAuditEvent(db, {
       refundRequestId: request.id,
       actorUserId: input.actor.id,
@@ -86,8 +91,9 @@ export function decideRefund(
   });
 
   try {
-    return { ok: true, auditEvent: apply() };
+    return { ok: true, auditEvent: apply.immediate() };
   } catch (err) {
+    if (err instanceof StaleDecisionError) return fail('NOT_PENDING');
     if (err instanceof RefundGatewayError) return fail('GATEWAY_FAILURE');
     throw err;
   }

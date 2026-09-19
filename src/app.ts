@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import express, { type Express, type Request, type Response } from 'express';
 import session from 'express-session';
 import { z } from 'zod';
@@ -21,14 +22,24 @@ export interface AppOptions {
   sessionSecret?: string;
 }
 
+const isProduction = (): boolean => process.env.NODE_ENV === 'production';
+
+function resolveSessionSecret(explicit?: string): string {
+  const secret = explicit ?? process.env.SESSION_SECRET;
+  if (secret) return secret;
+  if (isProduction()) throw new Error('SESSION_SECRET must be set when NODE_ENV=production');
+  return randomBytes(32).toString('hex');
+}
+
 export function createApp({ db, gateway = new MockRefundGateway(), sessionSecret }: AppOptions): Express {
   const app = express();
   app.use(express.urlencoded({ extended: false }));
   app.use(
     session({
-      secret: sessionSecret ?? process.env.SESSION_SECRET ?? 'dev-only-refund-ops-secret',
+      secret: resolveSessionSecret(sessionSecret),
       resave: false,
       saveUninitialized: false,
+      cookie: { httpOnly: true, sameSite: 'strict', secure: isProduction() },
     }),
   );
   app.use((req, _res, next) => {

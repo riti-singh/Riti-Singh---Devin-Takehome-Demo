@@ -10,6 +10,7 @@ export type Db = Database.Database;
 export function openDb(file: string): Db {
   const db = new Database(file);
   db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
   return db;
 }
 

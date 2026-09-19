@@ -31,6 +31,10 @@ Requires Node 22+. Log in by picking a seeded user — `Rhea Reviewer`
 (reviewer), `Raj Reviewer` (reviewer), or `Vic Viewer` (viewer). No passwords:
 this is a prototype using simple session-based login backed by seeded users.
 
+`SESSION_SECRET` is optional in development (a random per-process secret is
+generated) and **required** when `NODE_ENV=production` — startup fails without
+it rather than falling back to a shared default.
+
 ## Domain
 
 * `User(id, name, role)` — role is `reviewer` (view + approve/reject) or
@@ -59,9 +63,13 @@ decision form for viewers is cosmetic only.
    `RAISE(ABORT, ...)`, so a direct SQL `UPDATE`/`DELETE` fails even if the
    application is bypassed (see `tests/auditImmutability.test.ts`).
 
-**One audit event per successful mutation, written atomically.** The gateway
-call, the status update, and the audit insert happen inside a single
-`better-sqlite3` transaction — both commit or neither does.
+**One audit event per successful mutation, written atomically.** The status
+update, the gateway call, and the audit insert happen inside a single immediate
+`better-sqlite3` transaction — both commit or neither does. The status update
+is a guarded `UPDATE ... WHERE id = ? AND status = 'PENDING'`; if it affects no
+rows the request was decided concurrently, the transaction is rolled back and
+the caller gets `NOT_PENDING` (HTTP 409). Two racing reviewers therefore
+produce exactly one decision, one gateway call, and one audit event.
 
 **External boundary.** `RefundGateway.issueRefund(request) -> { gatewayRef }`
 has one implementation, `MockRefundGateway`, which is deterministic: it returns
@@ -83,10 +91,22 @@ failure is *not* a lifecycle state.
   reconciliation against the provider. Intentionally out of scope for this
   prototype. The same note appears as a comment on the approve path in
   `src/service/decide.ts`.
-* Sessions are in-memory (`express-session` MemoryStore) and login is a user
-  picker with no credentials — fine for a prototype, not for production.
+* **No real authentication.** Login is a picker over seeded users with no
+  credentials, so anyone who can reach the app can assume a reviewer identity.
+  This is an intentional prototype limitation: production needs real
+  authentication (SSO/IdP or password + MFA), per-user accounts, and session
+  revocation. Server-side *authorization* is real and enforced; only
+  *authentication* is stubbed.
+* **No CSRF protection.** The decision endpoint trusts the session cookie, so a
+  cross-site POST from a logged-in reviewer's browser would be accepted.
+  `sameSite=strict` cookies mitigate this in modern browsers but are not a
+  substitute for CSRF tokens (or origin checks) on state-changing routes;
+  broader CSRF hardening is out of scope for Milestone 1.
+* Session cookies are `httpOnly`, `sameSite=strict`, and `secure` only when
+  `NODE_ENV=production`; sessions live in the `express-session` MemoryStore, so
+  they are lost on restart and do not work across multiple processes.
 * SQLite single-file storage, no migrations tooling, no pagination on the
-  queue, no CSRF tokens, no rate limiting.
+  queue, no rate limiting.
 
 ## Candidates for reuse when a second tool is added
 

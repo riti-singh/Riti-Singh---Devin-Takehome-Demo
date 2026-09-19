@@ -116,6 +116,14 @@ export function insertAuditEvent(
   return row;
 }
 
-export function updateRefundStatus(db: Db, id: string, status: RefundStatus): void {
-  db.prepare('UPDATE refund_requests SET status = ? WHERE id = ?').run(status, id);
+/**
+ * Moves a request out of PENDING, returning false if it is no longer PENDING.
+ * The status guard lives in the UPDATE itself so two concurrent decisions on
+ * the same request cannot both win.
+ */
+export function claimPendingRefund(db: Db, id: string, status: RefundStatus): boolean {
+  const result = db
+    .prepare("UPDATE refund_requests SET status = ? WHERE id = ? AND status = 'PENDING'")
+    .run(status, id);
+  return result.changes === 1;
 }
