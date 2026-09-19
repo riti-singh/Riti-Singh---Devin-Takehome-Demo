@@ -105,6 +105,45 @@ describe('concurrent changes to the same flag and environment', () => {
     ]);
   });
 
+  it('does not report a stale apparent no-op as nothing to do', () => {
+    const { system, calls } = countingFlagSystem();
+
+    // Connection B reads the flag as disabled and asks for it to stay
+    // disabled: an apparent no-op against a value that A is about to change.
+    const staleState = getFlagState(b, 'ff-bulk-refunds', 'development')!;
+    expect(staleState.enabled).toBe(false);
+
+    expect(
+      changeFlag(a, system, {
+        actor: getUser(a, 'user-developer')!,
+        flagId: 'ff-bulk-refunds',
+        environment: 'development',
+        enabled: true,
+        reasonNote: 'enabling before the other writer acts',
+      }).ok,
+    ).toBe(true);
+
+    const second = changeFlag(b, system, {
+      actor: getUser(b, 'user-developer-2')!,
+      flagId: 'ff-bulk-refunds',
+      environment: 'development',
+      enabled: staleState.enabled,
+      reasonNote: 'keeping it disabled',
+    });
+
+    expect(second.ok).toBe(true);
+    expect(second).not.toMatchObject({ failure: 'NO_OP' });
+    expect(getFlagState(b, 'ff-bulk-refunds', 'development')!.enabled).toBe(false);
+    expect(listFlagAuditEvents(b, 'ff-bulk-refunds')).toMatchObject([
+      { fromEnabled: false, toEnabled: true },
+      { fromEnabled: true, toEnabled: false },
+    ]);
+    expect(calls).toEqual([
+      { flagKey: 'bulk-refunds', environment: 'development', enabled: true },
+      { flagKey: 'bulk-refunds', environment: 'development', enabled: false },
+    ]);
+  });
+
   it('never calls the external system for a no-op toggle', () => {
     const { system, calls } = countingFlagSystem();
 

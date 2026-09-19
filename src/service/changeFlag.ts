@@ -14,6 +14,8 @@ import {
 } from '../repo/flags.js';
 
 class StaleFlagChangeError extends Error {}
+class NoOpFlagChangeError extends Error {}
+class MissingFlagStateError extends Error {}
 
 export type FlagChangeFailure =
   | 'NOT_FOUND'
@@ -53,13 +55,15 @@ function fail(failure: FlagChangeFailure): FlagChangeOutcome {
 /**
  * Changes a flag's state in one environment.
  *
- * A toggle to the value already stored is a no-op: it never opens a
- * transaction, never calls the external system and never writes an audit
- * event. A real change runs a guarded compare-and-swap keyed on the value read
- * a moment earlier, inside one immediate SQLite transaction; the external
- * system is only called once that transition has won the race, and the single
- * audit insert follows it. If the external call throws, the transaction rolls
- * back and the stored state is untouched.
+ * Everything that depends on the stored value happens inside one immediate
+ * SQLite transaction, so a concurrent writer cannot change the value between
+ * the read and the decision it justifies. The current state is re-read under
+ * the write lock: if it already equals the requested value the change is a
+ * confirmed no-op and the transaction rolls back without calling the external
+ * system or writing an audit event. Otherwise a guarded compare-and-swap keyed
+ * on that value runs, the external system is called only once the transition
+ * has won, and the single audit insert follows it. If the external call
+ * throws, the transaction rolls back and the stored state is untouched.
  *
  * KNOWN LIMITATION: as with the refund gateway, this rollback does not give
  * real consistency between the external feature-flag system and this database.
@@ -80,11 +84,11 @@ export function changeFlag(
   });
   if (!rules.ok) return fail(rules.failure);
 
-  const state = getFlagState(db, flag.id, input.environment);
-  if (!state) return fail('NOT_FOUND');
-  if (state.enabled === input.enabled) return fail('NO_OP');
-
   const apply = db.transaction((): FlagAuditEvent => {
+    const state = getFlagState(db, flag.id, input.environment);
+    if (!state) throw new MissingFlagStateError();
+    if (state.enabled === input.enabled) throw new NoOpFlagChangeError();
+
     const changed = applyFlagStateTransition(db, {
       flagId: flag.id,
       environment: input.environment,
@@ -114,6 +118,8 @@ export function changeFlag(
   try {
     return { ok: true, auditEvent: apply.immediate() };
   } catch (err) {
+    if (err instanceof NoOpFlagChangeError) return fail('NO_OP');
+    if (err instanceof MissingFlagStateError) return fail('NOT_FOUND');
     if (err instanceof StaleFlagChangeError) return fail('CONFLICT');
     if (err instanceof FeatureFlagSystemError) return fail('EXTERNAL_FAILURE');
     throw err;

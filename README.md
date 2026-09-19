@@ -120,13 +120,20 @@ always throws for the synthetic key `flag-apply-fail` (seeded as
 `ff-apply-fail`). On failure the transaction rolls back — state unchanged, no
 audit event, retryable (HTTP 502).
 
-**Concurrency-safe compare-and-swap.** `changeFlag` reads the current value
-first:
+**Concurrency-safe compare-and-swap.**
 
-* If it already equals the desired value the change is a **NO_OP**: no
-  transaction, no external call, no audit event; the caller is redirected back
-  to the detail page as with a successful change.
-* Otherwise, inside one immediate SQLite transaction, a guarded
+Every read the decision depends on happens **inside** one immediate SQLite
+transaction, so a concurrent writer cannot change the value between the read
+and the decision it justifies:
+
+* The current state is re-read under the write lock. If it still equals the
+  requested value the change is a confirmed **NO_OP**: the transaction rolls
+  back having written nothing, no external call is made, no audit event is
+  written, and the caller is redirected back to the detail page as with a
+  successful change. A *stale* apparent no-op — the caller asks for the value
+  it read a moment ago, but another writer has since changed it — is not a
+  no-op and proceeds through the normal change path.
+* Otherwise, still inside that transaction, a guarded
   `UPDATE feature_flag_states SET enabled = @desired ... WHERE flag_id = ? AND
   environment = ? AND enabled = @expectedCurrent` runs first. The external
   system is called **only after** that update reports exactly one changed row,
@@ -140,6 +147,18 @@ first:
 The known production limitations below apply to this tool as well: no real
 authentication, no CSRF protection, and no external-system/database
 reconciliation.
+
+## Database upgrades are out of scope
+
+The schema for this milestone (the new role values, `feature_flags`,
+`feature_flag_states`, `flag_audit_events` and its triggers) is applied by
+`src/db/schema.sql` at creation time only — there is no migration framework and
+`npm run seed` recreates the database from scratch. **A fresh seeded prototype
+database is assumed.** Upgrading an existing Milestone 1 `data/refunds.db`
+in place is unsupported: it will lack the flag tables and still carry the
+narrower `users.role` CHECK. Delete it and re-seed. A production system would
+need versioned, reversible migrations applied as part of deployment;
+intentionally out of scope for this time-boxed prototype.
 
 ## Known production limitations
 
