@@ -150,15 +150,22 @@ reconciliation.
 
 ## Database upgrades are out of scope
 
-The schema for this milestone (the new role values, `feature_flags`,
-`feature_flag_states`, `flag_audit_events` and its triggers) is applied by
-`src/db/schema.sql` at creation time only — there is no migration framework and
-`npm run seed` recreates the database from scratch. **A fresh seeded prototype
-database is assumed.** Upgrading an existing Milestone 1 `data/refunds.db`
-in place is unsupported: it will lack the flag tables and still carry the
-narrower `users.role` CHECK. Delete it and re-seed. A production system would
-need versioned, reversible migrations applied as part of deployment;
-intentionally out of scope for this time-boxed prototype.
+There is no migration framework: `src/db/schema.sql` runs on startup, but every
+statement in it is `CREATE ... IF NOT EXISTS`. **A fresh seeded prototype
+database is assumed** — `npm run seed` recreates one from scratch.
+
+Pointing this milestone at an existing Milestone 1 `data/refunds.db` is
+unsupported. The new `feature_flags`, `feature_flag_states` and
+`flag_audit_events` tables *are* created, but empty, and nothing is migrated:
+
+* `CREATE TABLE IF NOT EXISTS users` does not alter the existing table, so
+  `users.role` keeps the old `CHECK (role IN ('reviewer','viewer'))` and
+  inserting a `developer` or `admin` user fails.
+* No feature-flag seed data is populated, so `/flags` is empty.
+
+Delete the file and re-seed. A production system would need versioned,
+reversible migrations applied as part of deployment; intentionally out of scope
+for this time-boxed prototype.
 
 ## Known production limitations
 
