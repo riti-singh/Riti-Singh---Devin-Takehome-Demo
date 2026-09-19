@@ -1,8 +1,28 @@
-# Refund Operations (Milestone 1)
+# Internal Tools: Refund Operations + Feature Flag Administration
 
-A small internal tool for reviewing customer refund requests: a queue, a detail
-view, approve/reject with a **required reason**, and an **append-only audit
-trail**. Deliberately time-boxed and minimal — one tool, not a framework.
+Two small internal tools sharing one Express app:
+
+* **Refund Operations** (`/refunds`) — a queue, a detail view, approve/reject
+  with a **required reason**, and an **append-only audit trail**.
+* **Feature Flag Administration** (`/flags`) — flags and their per-environment
+  state, changes gated by environment-scoped roles with a **required reason**,
+  and its own **append-only audit trail**.
+
+Deliberately time-boxed prototypes, not a platform.
+
+## What this prototype tests
+
+Whether Devin can establish internal-tool conventions once and then extend the
+same codebase with less human architectural guidance the second time. Refund
+Operations was built first; Feature Flag Administration was added afterwards
+from a fresh Devin session working from the existing repository and DeepWiki,
+reusing the conventions already set rather than re-deciding them.
+
+What it exercises is the application layer: authorization, auditable
+mutations, external-system boundaries, concurrency, testing, and how much of
+the first tool the second one can reuse. It does not attempt to reproduce the
+managed platform around something like Power Apps — no hosting, connectors,
+tenant administration, governance or lifecycle tooling.
 
 ## Stack
 
@@ -28,17 +48,32 @@ npm run test:all    # typecheck + unit + browser tests
 ```
 
 Requires Node 22+. Log in by picking a seeded user — `Rhea Reviewer`
-(reviewer), `Raj Reviewer` (reviewer), or `Vic Viewer` (viewer). No passwords:
+(reviewer), `Raj Reviewer` (reviewer), `Vic Viewer` (viewer), `Dev Developer`
+(developer), `Dana Developer` (developer), or `Ada Admin` (admin). No passwords:
 this is a prototype using simple session-based login backed by seeded users.
 
 `SESSION_SECRET` is optional in development (a random per-process secret is
 generated) and **required** when `NODE_ENV=production` — startup fails without
 it rather than falling back to a shared default.
 
+## Quick demo
+
+After `npm run setup && npm start`, at http://localhost:3000:
+
+1. Log in as `Rhea Reviewer`, approve or reject a `PENDING` refund with a
+   reason, and check the audit trail on the request's detail page.
+2. Log in as `Ada Admin` and change a flag's `production` state at `/flags`.
+3. Log in as `Dev Developer` and change the same flag's `development` state —
+   `production` shows as read-only, with no change form.
+4. Try the seeded failure cases — refund `rr-1005` (`CUST-GATEWAY-FAIL`) and
+   the `ff-apply-fail` flag: both report an error and leave the state and the
+   audit trail unchanged.
+
 ## Domain
 
-* `User(id, name, role)` — role is `reviewer` (view + approve/reject) or
-  `viewer` (read-only).
+* `User(id, name, role)` — role is `reviewer` (view + approve/reject refunds),
+  `viewer` (read-only), `developer` (change flags in `development`), or `admin`
+  (change flags in any environment).
 * `RefundRequest(id, customerRef, amountCents, reason, status, createdAt)` —
   status is `PENDING`, `APPROVED`, or `REJECTED`.
 * `AuditEvent(id, refundRequestId, actorUserId, action, fromStatus, toStatus,
@@ -79,6 +114,86 @@ back: the request stays `PENDING`, no audit event is written, the reviewer sees
 a non-destructive error and may retry the same decision later. A gateway
 failure is *not* a lifecycle state.
 
+## Feature Flag Administration
+
+Routes: `GET /flags` (all flags with per-environment state), `GET /flags/:id`
+(per-environment state, a change form only for environments the signed-in user
+may change, and the flag's audit trail), `POST /flags/:id/change` (body:
+`environment`, `enabled`, `reasonNote`).
+
+* `FeatureFlag(id, key, description, createdAt)`.
+* `FeatureFlagState(flagId, environment, enabled, updatedAt)` — environments
+  are fixed: exactly `development` and `production`.
+* `FlagAuditEvent(id, flagId, environment, actorUserId, fromEnabled, toEnabled,
+  reasonNote, externalRef, createdAt)`.
+
+**Environment-scoped authorization, server-side.** `canChangeFlag(role,
+environment)` is the single rule: `developer` → `development` only, `admin` →
+both, every other role → none. It backs both the middleware
+(`requireFlagChangePermission`, keyed on the posted environment) and the view
+that decides which change forms to render; hiding a form is cosmetic only. A
+developer posting directly to a production flag gets HTTP 403 with no state
+change and no audit write (`tests/flagHttp.test.ts`, `e2e/flagFlows.spec.ts`).
+
+**Dedicated append-only audit table.** `flag_audit_events` has its own
+`BEFORE UPDATE`/`BEFORE DELETE` `RAISE(ABORT, ...)` triggers, and
+`insertFlagAuditEvent` is the only write path — the same two-layer guarantee
+the refund tool has, with per-tool columns instead of a shared generic table.
+
+**External boundary.** `FeatureFlagSystem.applyFlag({flagKey, environment,
+enabled}) -> { externalRef }` has one deterministic implementation,
+`MockFeatureFlagSystem`: it returns `mock_ff_<flagKey>_<environment>` and
+always throws for the synthetic key `flag-apply-fail` (seeded as
+`ff-apply-fail`). On failure the transaction rolls back — state unchanged, no
+audit event, retryable (HTTP 502).
+
+**Concurrency-safe compare-and-swap.**
+
+Every read the decision depends on happens **inside** one immediate SQLite
+transaction, so a concurrent writer cannot change the value between the read
+and the decision it justifies:
+
+* The current state is re-read under the write lock. If it still equals the
+  requested value the change is a confirmed **NO_OP**: the transaction rolls
+  back having written nothing, no external call is made, no audit event is
+  written, and the caller is redirected back to the detail page as with a
+  successful change. A *stale* apparent no-op — the caller asks for the value
+  it read a moment ago, but another writer has since changed it — is not a
+  no-op and proceeds through the normal change path.
+* Otherwise, still inside that transaction, a guarded
+  `UPDATE feature_flag_states SET enabled = @desired ... WHERE flag_id = ? AND
+  environment = ? AND enabled = @expectedCurrent` runs first. The external
+  system is called **only after** that update reports exactly one changed row,
+  mirroring how the refund gateway call sits after `claimPendingRefund`.
+* If the guarded update changes no rows, another writer got there first:
+  `StaleFlagChangeError` rolls the transaction back and the caller gets
+  **CONFLICT** (HTTP 409) with no state change, no audit event and no external
+  call — a stale change is never issued externally
+  (`tests/flagConcurrency.test.ts`).
+
+The known production limitations below apply to this tool as well: no real
+authentication, no CSRF protection, and no external-system/database
+reconciliation.
+
+## Database upgrades are out of scope
+
+There is no migration framework: `src/db/schema.sql` runs on startup, but every
+statement in it is `CREATE ... IF NOT EXISTS`. **A fresh seeded prototype
+database is assumed** — `npm run seed` recreates one from scratch.
+
+Pointing this milestone at an existing Milestone 1 `data/refunds.db` is
+unsupported. The new `feature_flags`, `feature_flag_states` and
+`flag_audit_events` tables *are* created, but empty, and nothing is migrated:
+
+* `CREATE TABLE IF NOT EXISTS users` does not alter the existing table, so
+  `users.role` keeps the old `CHECK (role IN ('reviewer','viewer'))` and
+  inserting a `developer` or `admin` user fails.
+* No feature-flag seed data is populated, so `/flags` is empty.
+
+Delete the file and re-seed. A production system would need versioned,
+reversible migrations applied as part of deployment; intentionally out of scope
+for this time-boxed prototype.
+
 ## Known production limitations
 
 * **External-system/database consistency is not actually solved.** Rolling back
@@ -108,21 +223,34 @@ failure is *not* a lifecycle state.
 * SQLite single-file storage, no migrations tooling, no pagination on the
   queue, no rate limiting.
 
-## Candidates for reuse when a second tool is added
+## Reuse between the two tools
 
-Noted, deliberately **not** extracted or generalized yet:
+Extracted, because the second tool genuinely needed it:
 
-* `src/auth.ts` — session loading plus `requireLogin`/`requireReviewer`. The
-  role-check middleware is the obvious first thing a second tool would want,
-  probably as `requireRole(role)`.
-* `src/repo/refunds.ts` `insertAuditEvent` plus the `audit_events` table and its
-  immutability triggers — a generic `audit(entityType, entityId, ...)` table
-  would serve several tools, at the cost of typed per-entity columns.
-* The "validate -> authorize -> side effect -> mutate + audit in one
-  transaction" shape in `src/service/decide.ts` is the real reusable pattern; a
-  shared helper only makes sense once a second caller exists.
-* `src/views.ts` layout/escaping helpers — a shared layout + HTML escaping
-  module is a cheap extraction when a second set of views appears.
+* `src/auth.ts` — `loadCurrentUser` and `requireLogin` are shared as-is. The
+  role check is parameterized per tool rather than generalized into one
+  middleware: `requireReviewer` (refunds) and `requireFlagChangePermission`
+  (flags, keyed on role **and** target environment), both delegating to a pure
+  rule in `src/domain/`.
+* `src/views.ts` — `escapeHtml` and `layout` are shared; the previously
+  hardcoded `· Refund Operations` title and header are now a per-tool
+  parameter, so refund pages render byte-identically.
+
+Deliberately **not** extracted:
+
+* **No generic transaction/service helper.** The "validate → authorize →
+  guarded update → external call → audit, in one immediate transaction" shape
+  is duplicated between `src/service/decide.ts` and `src/service/changeFlag.ts`
+  on purpose: the guard column, the external payload and the audit columns all
+  differ, and a shared helper would abstract over the very details that make
+  each one correct.
+* **No generic audit table.** `flag_audit_events` is its own table with its own
+  immutability triggers rather than a shared
+  `audit(entityType, entityId, ...)`, keeping typed per-entity columns and
+  per-tool constraints.
+* **No shared gateway abstraction.** `RefundGateway` and `FeatureFlagSystem`
+  are separate interfaces with separate error types and synthetic failure
+  fixtures.
 
 ## Layout
 
@@ -134,12 +262,16 @@ src/
   views.ts                server-rendered HTML
   db/schema.sql           tables + audit immutability triggers
   db/index.ts             connection + migrate
-  db/seed.ts              synthetic users and refund requests
+  db/seed.ts              synthetic users, refund requests, feature flags
   domain/rules.ts         pure decision rules (reason required, PENDING-only, role)
+  domain/flagRules.ts     pure flag rules (role x environment, reason required)
   domain/types.ts
   gateway/refundGateway.ts RefundGateway interface + deterministic MockRefundGateway
+  gateway/featureFlagSystem.ts FeatureFlagSystem interface + MockFeatureFlagSystem
   repo/refunds.ts         SQL access; audit inserts only
+  repo/flags.ts           SQL access incl. guarded flag compare-and-swap; audit inserts only
   service/decide.ts       transactional approve/reject
+  service/changeFlag.ts   transactional flag change (compare-and-swap, NO_OP, CONFLICT)
 tests/                    Vitest
 e2e/                      Playwright
 ```

@@ -3,14 +3,19 @@ import { dirname } from 'node:path';
 import type { Db } from './index.js';
 import { createDb } from './index.js';
 import { insertRefundRequest, insertUser } from '../repo/refunds.js';
-import type { RefundRequest, User } from '../domain/types.js';
+import { insertFeatureFlag, insertFlagState } from '../repo/flags.js';
+import type { FeatureFlag, FeatureFlagState, RefundRequest, User } from '../domain/types.js';
 import { GATEWAY_FAILURE_CUSTOMER_REF } from '../gateway/refundGateway.js';
+import { FLAG_APPLY_FAILURE_KEY } from '../gateway/featureFlagSystem.js';
 
 /** Synthetic users; no real PII. */
 export const SEED_USERS: User[] = [
   { id: 'user-reviewer', name: 'Rhea Reviewer', role: 'reviewer' },
   { id: 'user-reviewer-2', name: 'Raj Reviewer', role: 'reviewer' },
   { id: 'user-viewer', name: 'Vic Viewer', role: 'viewer' },
+  { id: 'user-developer', name: 'Dev Developer', role: 'developer' },
+  { id: 'user-developer-2', name: 'Dana Developer', role: 'developer' },
+  { id: 'user-admin', name: 'Ada Admin', role: 'admin' },
 ];
 
 /** Synthetic refund requests; no real PII. */
@@ -73,10 +78,52 @@ export const SEED_REFUNDS: RefundRequest[] = [
   },
 ];
 
+/** Synthetic feature flags; no real PII. */
+export const SEED_FEATURE_FLAGS: FeatureFlag[] = [
+  {
+    id: 'ff-checkout-v2',
+    key: 'checkout-v2',
+    description: 'New checkout flow',
+    createdAt: '2026-01-04T09:00:00.000Z',
+  },
+  {
+    id: 'ff-bulk-refunds',
+    key: 'bulk-refunds',
+    description: 'Bulk refund actions in the refund queue',
+    createdAt: '2026-01-04T09:05:00.000Z',
+  },
+  {
+    id: 'ff-dark-mode',
+    key: 'dark-mode',
+    description: 'Dark colour scheme for internal tools',
+    createdAt: '2026-01-04T09:10:00.000Z',
+  },
+  {
+    id: 'ff-apply-fail',
+    key: FLAG_APPLY_FAILURE_KEY,
+    description: 'External-failure rehearsal case (mock system always declines)',
+    createdAt: '2026-01-04T09:15:00.000Z',
+  },
+];
+
+/** Every seeded flag has a state in both fixed environments. */
+export const SEED_FLAG_STATES: FeatureFlagState[] = [
+  { flagId: 'ff-checkout-v2', environment: 'development', enabled: true, updatedAt: '2026-01-04T09:00:00.000Z' },
+  { flagId: 'ff-checkout-v2', environment: 'production', enabled: false, updatedAt: '2026-01-04T09:00:00.000Z' },
+  { flagId: 'ff-bulk-refunds', environment: 'development', enabled: false, updatedAt: '2026-01-04T09:05:00.000Z' },
+  { flagId: 'ff-bulk-refunds', environment: 'production', enabled: false, updatedAt: '2026-01-04T09:05:00.000Z' },
+  { flagId: 'ff-dark-mode', environment: 'development', enabled: true, updatedAt: '2026-01-04T09:10:00.000Z' },
+  { flagId: 'ff-dark-mode', environment: 'production', enabled: true, updatedAt: '2026-01-04T09:10:00.000Z' },
+  { flagId: 'ff-apply-fail', environment: 'development', enabled: false, updatedAt: '2026-01-04T09:15:00.000Z' },
+  { flagId: 'ff-apply-fail', environment: 'production', enabled: false, updatedAt: '2026-01-04T09:15:00.000Z' },
+];
+
 export function seed(db: Db): void {
   const run = db.transaction(() => {
     for (const user of SEED_USERS) insertUser(db, user);
     for (const refund of SEED_REFUNDS) insertRefundRequest(db, refund);
+    for (const flag of SEED_FEATURE_FLAGS) insertFeatureFlag(db, flag);
+    for (const state of SEED_FLAG_STATES) insertFlagState(db, state);
   });
   run();
 }
@@ -94,5 +141,7 @@ if (isMain) {
   const file = process.env.DATABASE_FILE ?? 'data/refunds.db';
   const db = resetAndSeed(file);
   db.close();
-  console.log(`Seeded ${file} with ${SEED_USERS.length} users and ${SEED_REFUNDS.length} refund requests.`);
+  console.log(
+    `Seeded ${file} with ${SEED_USERS.length} users, ${SEED_REFUNDS.length} refund requests and ${SEED_FEATURE_FLAGS.length} feature flags.`,
+  );
 }
